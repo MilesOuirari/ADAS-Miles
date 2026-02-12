@@ -1,0 +1,8 @@
+/home/selim/ADAS-Miles/build/CMakeFiles/adas_swc.dir
+/home/selim/ADAS-Miles/build/CMakeFiles/adas_miles.dir
+/home/selim/ADAS-Miles/build/CMakeFiles/adas_miles_legacy.dir
+/home/selim/ADAS-Miles/build/CMakeFiles/test_signal_bus.dir
+/home/selim/ADAS-Miles/build/CMakeFiles/test_e2e.dir
+/home/selim/ADAS-Miles/build/CMakeFiles/test.dir
+/home/selim/ADAS-Miles/build/CMakeFiles/edit_cache.dir
+/home/selim/ADAS-Miles/build/CMakeFiles/rebuild_cache.dir

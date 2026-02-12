@@ -59,6 +59,9 @@ struct EgoState {
     float speed_kph;
     float speed_limit;
     bool autopilot_engaged;
+    int scenario_index = 0; // Current scenario (0-7)
+    float world_y = 0.0f;   // Forward position in world
+    float lane_x = 0.0f;    // Lateral position
 };
 
 struct VehicleState {

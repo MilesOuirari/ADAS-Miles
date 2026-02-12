@@ -7,6 +7,28 @@
 
 namespace adas::hud {
 
+enum class AdasState {
+    INACTIVE,
+    ACC_ACTIVE,
+    LKA_ACTIVE,
+    AEB_WARNING,
+    AEB_ACTIVE,
+    LANE_CHANGE_LEFT,
+    LANE_CHANGE_RIGHT
+};
+
+struct AdasStatus {
+    AdasState state;
+    float target_speed;
+    float time_gap;
+    bool hands_on_wheel;
+};
+
+// PID Constants/Tuning
+constexpr float kKp_LKA = 0.15f;
+constexpr float kKi_LKA = 0.01f;
+constexpr float kKd_LKA = 0.05f;
+
 class HUDModule {
 public:
     HUDModule() : e2e_checker_() {}

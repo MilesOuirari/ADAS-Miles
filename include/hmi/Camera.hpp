@@ -21,20 +21,27 @@ public:
 
     void updateFollow(const glm::vec3& carPos, float carYaw) {
         // Calculate desired position based on car yaw
-        // In our system: -Z is forward?
-        // Let's assume input carYaw is 0 when facing -Z.
+        // In our system: -Z is forward
         
         float offsetX = distance * std::sin(carYaw);
         float offsetZ = distance * std::cos(carYaw);
         
         glm::vec3 desiredPos = carPos + glm::vec3(offsetX, height, offsetZ);
         
-        // Lerp position
-        position = glm::mix(position, desiredPos, smoothFactor);
+        // Lock lateral position (X) to car for ego-centric feel
+        position.x = desiredPos.x;
+        
+        // Smooth vertical and longitudinal follow
+        position.y = glm::mix(position.y, desiredPos.y, smoothFactor);
+        position.z = glm::mix(position.z, desiredPos.z, smoothFactor);
         
         // Look slightly ahead of the car
         glm::vec3 desiredTarget = carPos + glm::vec3(-std::sin(carYaw)*5.0f, 0.0f, -std::cos(carYaw)*5.0f);
-        target = glm::mix(target, desiredTarget, smoothFactor);
+        
+        // Lock lateral target too
+        target.x = desiredTarget.x;
+        target.y = glm::mix(target.y, desiredTarget.y, smoothFactor);
+        target.z = glm::mix(target.z, desiredTarget.z, smoothFactor);
     }
 
     glm::mat4 getViewMatrix() {
