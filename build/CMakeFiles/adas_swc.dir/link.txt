@@ -1,2 +1,0 @@
-/usr/bin/ar qc libadas_swc.a CMakeFiles/adas_swc.dir/src/swc/ScenarioSWC.cpp.o CMakeFiles/adas_swc.dir/src/swc/EnvironmentModelSWC.cpp.o CMakeFiles/adas_swc.dir/src/swc/PlannerSWC.cpp.o CMakeFiles/adas_swc.dir/src/swc/RenderingSWC.cpp.o CMakeFiles/adas_swc.dir/src/swc/HudSWC.cpp.o CMakeFiles/adas_swc.dir/src/app/Application.cpp.o
-/usr/bin/ranlib libadas_swc.a

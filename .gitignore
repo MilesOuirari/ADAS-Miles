@@ -1,0 +1,5 @@
+build/
+hud_app
+test_logic
+*.o
+*.a

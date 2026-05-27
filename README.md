@@ -1,105 +1,130 @@
-# ADAS-Miles Level 4 Autonomous Driving Simulator
+# ADAS-Miles
 
-**ADAS-Miles** is a high-fidelity traffic simulation and autonomous driving platform built from scratch in C++ using an AUTOSAR-inspired Software Component (SWC) architecture. It simulates complex highway and urban scenarios with realistic vehicle dynamics, sensor fusion, and advanced decision-making algorithms.
+A real-time autonomous driving simulator written in C++17. The project implements a full ADAS stack — traffic simulation, trajectory planning, and OpenGL-based HMI visualization — structured around an AUTOSAR-inspired Software Component (SWC) architecture. The goal was to build something that closely mirrors how production ADAS ECU software is organized, not just a graphics demo.
 
-## 🚀 Key Features
+---
 
-### 1. Realistic Traffic Simulation
-- **Physics-Based Models**: Uses the **IDM (Intelligent Driver Model)** for car-following behavior (acceleration/braking) and **MOBIL (Minimizing Overall Braking Induced by Lane changes)** for lane-change decisions.
-- **Continuous Traffic Flow**: Implements a persistent traffic environment where vehicles spawn on the horizon (200-300m ahead) and are cleaned up behind the ego vehicle, creating an infinite driving experience.
-- **Scenario Management**: Supports dynamic scenarios including:
-  - Highway Cruising (4-lane, high speed)
-  - Urban Congestion (Traffic jams)
-  - Emergency Braking (Cut-ins)
-  - Intersection Handling (Traffic lights with Green/Yellow/Red cycles)
+## Architecture
 
-### 2. Autonomous Stack (Level 4)
-- **Perception Layer**: Simulates object detection (LiDAR/Radar/Camera fusion) via `ObjectList` and lane detection via `LaneNetwork`.
-- **Planning & Decision Making**:
-  - **Trajectory Generation**: Generates 4-second lookahead trajectories (polynomials) for multiple candidates (Keep Lane, Lane Change Left/Right).
-  - **Cost-Based Selection**: Evaluates trajectories based on Safety (Collision), Efficiency (Speed), Comfort (Jerk), and Lane Discipline.
-  - **Predictive Safety**:
-    - **TTC (Time-To-Collision)**: Monitors blind spots and prevents lane changes if a rear vehicle is approaching fast (`TTC < 3.5s`).
-    - **Cut-in Prediction**: Proactively detects adjacent vehicles merging into the ego lane and treats them as obstacles before they fully arrive.
-  - **Speed Adaptation**: Automatically adjusts target speed based on road curvature (e.g., slowing down for sharp turns).
-- **Control System**:
-  - **Lateral Control**: P-Controller with high gain for decisive lane centering and lane changes.
-  - **Longitudinal Control**: Adaptive Cruise Control (ACC) logic with smooth acceleration profiles.
-
-### 3. Visualization & HMI
-- **3D Rendering**: OpenGL-based rendering engine with custom shaders for lighting, shadows, and materials.
-- **Ego-Centric View**: The camera is locked to the ego vehicle's lateral position, providing a stable "driver's eye" or "chase cam" perspective where the world moves around the car.
-- **Head-Up Display (HUD)**: Real-time visualization of:
-  - Ego Speed (km/h) & Gear
-  - Object Bounding Boxes & Class Labels (Car, Truck, Pedestrian)
-  - Trajectory Path Ribbon (Yellow curve showing planned path)
-  - Lane Markings (curved based on road geometry)
-  - Traffic Signs & Traffic Lights
-
-## 🏗️ Architecture
-
-The system follows a modular **Software Component (SWC)** design pattern, simulating an automotive ECU environment:
+The system is split into five Software Components that communicate exclusively through a typed SignalBus, which acts as a Runtime Environment (RTE) analog. Each SWC inherits from `ComponentBase` and goes through a defined lifecycle (CREATED → INITIALIZED → CONFIGURED → RUNNING → SHUTDOWN). The Application orchestrator steps them in dependency order at ~60 Hz.
 
 ```
-[ Application Orchestrator ]
-       |
-       v
-[ Signal Bus (RTE) ]
-       |
-  +----+-----+----------------+-----------------+
-  |          |                |                 |
-[Scenario] [EnvModel]     [Planner]        [Rendering]
-(Config)   (Physics)      (Logic)          (Visuals)
+ScenarioSWC  →  EnvironmentModelSWC  →  PlannerSWC  →  RenderingSWC  →  HudSWC
+     |                  |                    |               |
+     └──────────────────┴────────────────────┴───────────────┘
+                         SignalBus (RTE)
 ```
 
-- **ScenarioSWC**: Manages high-level state (e.g., "Switch to Traffic Jam").
-- **EnvironmentModelSWC**: The "World Sim". Handles all traffic agents, physics updates (IDM/MOBIL), and road geometry. Outputs `ObjectList` and `LaneNetwork`.
-- **PlannerSWC**: The "Brain". Reads sensors, computes trajectories, selects the best path, and outputs a `Trajectory`.
-- **Application**: The "ECU". Orchestrates the loop, steps components, and applies the planner's output to the ego vehicle dynamics.
+Inter-component communication uses typed `SenderPort<T>` / `ReceiverPort<T>` pairs backed by `SignalSlot<T>`, with atomic update flags for last-is-best semantics. Signal identifiers follow the `"ComponentName/SignalName"` convention. Type safety is enforced at runtime via `std::any` + `std::type_index`.
 
-## 🎮 Controls
+Platform types (`uint8`, `float32`, `E_OK`, etc.) mirror the AUTOSAR SWS_Platform specification to keep the codebase portable and industry-readable.
 
-| Key | Action |
-|-----|--------|
-| **Space** | Toggle **Auto-Scenario Cycling** (Traffic Jam -> Highway -> City...) |
-| **1-8**   | Manually select specific scenarios |
-| **N** / **Right** | Next Scenario |
-| **P** / **Left** | Previous Scenario |
-| **ESC**   | Exit Simulation |
+---
 
-## 🛠️ Build & Run
+## Traffic Simulation (EnvironmentModelSWC)
 
-### Prerequisites
-- Linux (Ubuntu 20.04/22.04 recommended)
-- CMake 3.10+
-- GCC/G++
-- OpenGL / GLFW / GLEW
-- GLM (Mathematics library)
+The environment model runs a continuous multi-agent traffic simulation on a 4-lane highway (3.5 m per lane):
 
-### Compilation
+**Longitudinal control — IDM (Intelligent Driver Model)**
+
+Each traffic agent computes its acceleration using:
+
+```
+a = a_max * (1 - (v / v_desired)^4 - (s_star / gap)^2)
+```
+
+where `s_star` is the desired following distance as a function of speed and approach rate. This produces smooth, realistic braking and acceleration without scripted behavior.
+
+**Lane changes — MOBIL**
+
+Agents evaluate lane-change decisions using incentive/safety trade-offs: a move is accepted when the acceleration gain exceeds a politeness threshold and the resulting gap to any rear vehicle stays within a safety margin.
+
+**Traffic flow**
+
+Vehicles spawn 200–300 m ahead of the ego and are removed 300 m behind it, creating an infinite road. A traffic light state machine (GREEN 15 s → YELLOW 3 s → RED 12 s) gates traffic at intersections. Eight predefined scenarios (highway cruise, urban congestion, emergency braking, lane change, traffic jam, pedestrian crossing, intersection, highway merge) are cycled automatically or triggered via keyboard.
+
+---
+
+## Planner (PlannerSWC)
+
+The planner generates up to three trajectory candidates — Keep Lane, Lane Change Left, Lane Change Right — over a 4-second horizon (0.1 s timestep) and selects the minimum-cost option.
+
+**Cost function**
+
+| Term | Weight | Description |
+|------|--------|-------------|
+| Collision | 99999 | Hard rejection of any trajectory with predicted overlap |
+| Efficiency | 1.0 | Penalizes delta from speed limit |
+| Comfort | 10.0 | Penalizes lateral deviation |
+| Lane discipline | 2.0 / 10.0 | Discourages leftmost lanes (keep-right rule) |
+
+**Safety checks**
+
+- Blind-spot TTC: For any rear vehicle within 60 m, relative speed is computed and the candidate is rejected if TTC < 3.5 s.
+- Cut-in prediction: Vehicles within 2 m of the target lane boundary are treated as already-present obstacles before they fully merge.
+- Curve speed adaptation: Target speed is reduced proportionally to road curvature.
+
+The winning trajectory's target lane and speed are applied to the ego vehicle each frame via a P-controller (lateral) and ACC logic (longitudinal).
+
+---
+
+## Safety Layer (E2E Protection)
+
+Critical signals are wrapped in `SafePacket<T>` carrying a 4-bit sequence counter and a CRC-8-SAE J1850 checksum (polynomial 0x1D, initial 0xFF, final XOR 0xFF). The `E2EChecker` validates each incoming frame and rejects messages with a CRC mismatch or a non-sequential counter.
+
+Unit tests in `tests/test_e2e.cpp` cover: deterministic CRC, data-sensitivity, first-message acceptance, sequential acceptance, CRC rejection, counter-jump rejection, and reset behavior. The port/signal-bus layer has its own test suite in `tests/test_signal_bus.cpp` (6 tests including one-to-many routing and type-mismatch handling).
+
+---
+
+## Visualization (RenderingSWC + HudSWC)
+
+The renderer reads published signals from the bus and drives an OpenGL 3.3 scene:
+
+- Ego-centric chase camera with smooth vertical/longitudinal interpolation and a 5 m look-ahead offset
+- Procedural 3D meshes for car, bus, truck, bike, pedestrian, sign posts, road surface, dashed/solid lane markings, path ribbon, and bounding boxes
+- Custom GLSL shaders for geometry, glass HUD panels, road surface, traffic signs, and trajectory path
+- HUD overlay: current speed, speed limit, autopilot status, object class labels, trajectory ribbon, traffic sign icons
+- Texture atlas generated by Python scripts (PIL) for labels, traffic signs, maneuver arrows, and scenario names
+
+---
+
+## Build
+
+**Dependencies:** CMake 3.16+, GCC/Clang with C++17, OpenGL 3.3, GLFW3, GLEW, GLM
+
 ```bash
-mkdir build
-cd build
+mkdir build && cd build
 cmake ..
 make -j$(nproc)
 ```
 
-### Running
+**Targets**
+
+| Target | Description |
+|--------|-------------|
+| `adas_miles` | Main binary (SWC architecture) |
+| `adas_miles_legacy` | Monolithic version (earlier iteration) |
+| `test_signal_bus` | Port and bus unit tests |
+| `test_e2e` | E2E protection unit tests |
+
 ```bash
-./adas_miles
+./adas_miles          # run the simulator
+./test_signal_bus     # run port/bus tests
+./test_e2e            # run safety layer tests
 ```
 
-## 🚗 Physics & Logic Details
+---
 
-**Coordinate System**:
-- All internal calculations use **SI Units (meters, m/s)**.
-- **World Coordinates**: 
-  - X: Lateral position (0 = road center). Lane centers at ±1.75m, ±5.25m.
-  - Y: Longitudinal position (0 = start). Positive is forward.
-  - Z: Up (0 = ground).
-- **Planner Logic**:
-  - **Keep-Right Rule**: Penalizes driving in left-most lanes (Lane 1 cost += 2.0, Land 0 cost += 10.0) to encourage proper highway discipline.
-  - **Lane Change Incentive**: `W_LANE_CHANGE` cost (2.0) balances stability vs. efficiency (overtaking).
+## Controls
+
+| Key | Action |
+|-----|--------|
+| Space | Toggle auto-scenario cycling |
+| 1 – 8 | Jump to specific scenario |
+| N / Right | Next scenario |
+| P / Left | Previous scenario |
+| ESC | Exit |
 
 ---
-*Developed by Selim Ouirari for ADAS-Miles Project 2026.*
+
+*Selim Ouirari — 2026*
